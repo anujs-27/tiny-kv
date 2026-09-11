@@ -56,6 +56,42 @@ TEST(KVStoreTest, DumpAndLoad) {
     }
 }
 
+TEST(KVStoreTest, ConcurrentReadWriteStress) {
+    constexpr size_t capacity = 50;
+    KVStore db(capacity);
+    constexpr int num_threads = 8;
+    constexpr int ops_per_thread = 500;
+    constexpr int key_space = 30;
+
+    std::vector<std::thread> workers;
+    workers.reserve(num_threads);
+
+    for (int t = 0; t < num_threads; ++t) {
+        workers.emplace_back([&db, t]() {
+            for (int i = 0; i < ops_per_thread; ++i) {
+                std::string key = "key_" + std::to_string((t + i) % key_space);
+                if (i % 3 == 0) {
+                    db.set(key, "val_" + std::to_string(i));
+                } else if (i % 3 == 1) {
+                    auto val = db.get(key);
+                    if (val.has_value()) {
+                        EXPECT_FALSE(val->empty());
+                    }
+                } else {
+                    db.del(key);
+                }
+            }
+        });
+    }
+    for (auto& worker : workers) {
+        worker.join();
+    }
+    db.set("canary_key", "canary_val");
+    auto res = db.get("canary_key");
+    ASSERT_TRUE(res.has_value());
+    EXPECT_EQ(*res, "canary_val");
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
