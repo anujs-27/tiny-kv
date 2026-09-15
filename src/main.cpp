@@ -1,26 +1,105 @@
 #include <chrono>
 #include <iostream>
+#include <optional>
+#include <string>
 
+#include "httplib.h"
 #include "kvstore.hpp"
 
-int main() {
-    std::cout << "Starting tiny-kvstore demo...\n";
-    KVStore store(2);
-    store.set("user", "alice");
-    store.set("role", "admin");
-    if (auto user = store.get("user")) {
-        std::cout << "Retrieved key 'user': " << *user << "\n";
+int main(int argc, char const* argv[]) {
+    size_t capacity = 1000;
+
+    if (argc > 1) {
+        try {
+            unsigned long val = std::stoul(argv[1]);
+            if (val == 0) {
+                std::cerr << "Error: Capacity must be greater than 0.\n";
+                return 1;
+            }
+            capacity = static_cast<size_t>(val);
+        } catch (...) {
+            std::cerr << "Usage: " << argv[0] << " [capacity]\n";
+            return 1;
+        }
     }
-    store.set("session", "active");
-    std::cout << "Testing LRU eviction:\n";
-    std::cout << "  'user' still present: "
-              << (store.get("user").has_value() ? "yes" : "no") << "\n";
-    std::cout << "  'role' still present (should be evicted): "
-              << (store.get("role").has_value() ? "yes" : "no") << "\n";
-    const std::string snapshot_file = "snapshot.bin";
-    if (store.dump(snapshot_file)) {
-        std::cout << "Saved snapshot to " << snapshot_file << "\n";
-    }
-    std::cout << "Demo completed successfully.\n";
+
+    KVStore store(capacity);
+    httplib::Server server;
+
+    server.Put(R"(/kv/(.+))", [&store](const httplib::Request& req, httplib::Response& res) {
+        std::string key = req.matches[1];
+        std::string value = req.body;
+        std::optional<std::chrono::milliseconds> life_ms = std::nullopt;
+
+        if (req.has_param("life")) {
+            try {
+                long long parsed = std::stoll(req.get_param_value("life"));
+                if (parsed <= 0) {
+                    res.status = 400;
+                    res.set_content("Invalid life parameter: must be positive\n", "text/plain");
+                    return;
+                }
+                life_ms = std::chrono::milliseconds(parsed);
+            } catch (...) {
+                res.status = 400;
+                res.set_content("Invalid life parameter\n", "text/plain");
+                return;
+            }
+        }
+
+        store.set(key, value, life_ms);
+        res.status = 200;
+        res.set_content("OK\n", "text/plain");
+    });
+
+    server.Get(R"(/kv/(.+))", [&store](const httplib::Request& req, httplib::Response& res) {
+        std::string key = req.matches[1];
+        auto value = store.get(key);
+        if (value) {
+            res.status = 200;
+            res.set_content(*value, "text/plain");
+        } else {
+            res.status = 404;
+            res.set_content("Key not found\n", "text/plain");
+        }
+    });
+
+    server.Delete(R"(/kv/(.+))", [&store](const httplib::Request& req, httplib::Response& res) {
+        std::string key = req.matches[1];
+        if (store.del(key)) {
+            res.status = 200;
+            res.set_content("Deleted\n", "text/plain");
+        } else {
+            res.status = 404;
+            res.set_content("Key not found\n", "text/plain");
+        }
+    });
+
+    server.Post("/admin/dump", [&store](const httplib::Request& req, httplib::Response& res) {
+        std::string path = req.has_param("path") ? req.get_param_value("path") : "snapshot.bin";
+
+        if (store.dump(path)) {
+            res.status = 200;
+            res.set_content("Snapshot saved\n", "text/plain");
+        } else {
+            res.status = 500;
+            res.set_content("Failed to save snapshot\n", "text/plain");
+        }
+    });
+
+    server.Post("/admin/load", [&store](const httplib::Request& req, httplib::Response& res) {
+        std::string path = req.has_param("path") ? req.get_param_value("path") : "snapshot.bin";
+
+        if (store.load(path)) {
+            res.status = 200;
+            res.set_content("Snapshot loaded\n", "text/plain");
+        } else {
+            res.status = 500;
+            res.set_content("Failed to load snapshot\n", "text/plain");
+        }
+    });
+
+    std::cout << "Starting server on port 8080 (capacity: " << capacity << ")...\n";
+    server.listen("0.0.0.0", 8080);
     return 0;
 }

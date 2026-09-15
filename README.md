@@ -1,22 +1,35 @@
-# Tiny-KV
+# tiny-kv
 
-A simple in-memory key-value store built in C++20 with LRU eviction, key expiration, and binary file persistence. It serves as a hands-on project to explore thread synchronization, memory management, and writing automated tests with GoogleTest.
+A simple in-memory key-value store written in C++20. I built this to understand how to implement thread-safe data structures, an LRU cache eviction policy, and basic binary persistence from scratch, backed by a simple HTTP interface.
 
 ## Features
-- **C++20 Implementation**: Leverages modern C++ features.
-- **LRU Eviction**: Automatically evicts the least recently used keys when capacity is reached.
-- **Key Expiration (TTL)**: Supports expiration times for cached keys.
-- **Binary Persistence**: Save and load the state using binary file serialization.
-- **Thread-Safe**: Designed for safe concurrent access.
-- **Tested**: Comprehensive test suite written using GoogleTest.
 
-## Getting Started
-### Prerequisites
-- A C++20 compatible compiler (GCC, Clang, or MSVC)
-- CMake (version 3.14 or higher)
+* **LRU Eviction**: Evicts least-recently used keys when max capacity is hit.
+* **TTL Support**: Optional expiration per key in milliseconds.
+* **Binary Persistence**: Dumps and loads the cache to/from disk in binary format.
+* **Thread Safe**: Protects internal hash table and list access for concurrent operations.
+* **HTTP Interface**: Built with `cpp-httplib`.
 
-### Building the Project
+## API Endpoints
+
+* `GET /kv/{key}` - Get a value (404 if missing or expired)
+* `PUT /kv/{key}?life={ms}` - Store a value from the request body (optional TTL)
+* `DELETE /kv/{key}` - Delete a key
+* `POST /admin/dump?path={file}` - Save cache state to a binary file (defaults to `snapshot.bin`)
+* `POST /admin/load?path={file}` - Load cache state from a binary file
+
+## Build and Run
+
+Requires a C++20 compiler and CMake 3.20+.
+
 ```bash
-mkdir build && cd build
-cmake ..
-cmake --build .
+cmake -B build
+cmake --build build
+```
+
+Run the server (default capacity is 1000 items):
+
+```bash
+./build/tinykv
+./build/tinykv 5000
+```
