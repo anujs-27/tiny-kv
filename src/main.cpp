@@ -2,6 +2,8 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <syncstream>
 
 #include "httplib.h"
 #include "kvstore.hpp"
@@ -99,7 +101,12 @@ int main(int argc, char const* argv[]) {
         }
     });
 
-    std::cout << "Starting server on port 8080 (capacity: " << capacity << ")...\n";
+    server.set_logger([](const httplib::Request& req, const httplib::Response& res) {
+        std::osyncstream(std::cout) << "[INFO] " << req.method << " " << req.path << " -> " << res.status << "\n";
+    });
+
+    std::cout
+        << "[INFO] STARTING SERVER ON PORT 8080 (CAPACITY: " << capacity << ")...\n";
     server.listen("0.0.0.0", 8080);
     return 0;
 }
