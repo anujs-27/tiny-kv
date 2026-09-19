@@ -27,10 +27,21 @@ bool is_safe_filename(std::string_view filename) {
     }
     return true;
 }
+
+bool is_authorized(const httplib::Request& req, const std::string& secret) {
+    if (secret.empty()) return false;
+    return req.get_header_value("Authorization") == ("Bearer " + secret);
+}
 }  // namespace
 
 int main(int argc, char const* argv[]) {
     size_t capacity = 1000;
+    const char* env_token = std::getenv("TINYKV_ADMIN");
+    std::string admin_token = env_token ? env_token : "";
+
+    if (admin_token.empty()) {
+        std::cerr << "[WARN] TINYKV_ADMIN not configured. Admin endpoints (/admin/*) are disabled.\n";
+    }
 
     if (argc > 1) {
         try {
@@ -59,7 +70,7 @@ int main(int argc, char const* argv[]) {
         std::string key = req.matches[1];
         if (key.size() > 64 * 1024) {
             res.status = 400;
-            res.set_content("Key too long\n", "text/plain");
+            res.set_content("{\"error\":\"key too long\"}", "application/json");
             return;
         }
 
@@ -72,20 +83,20 @@ int main(int argc, char const* argv[]) {
                 constexpr long long MAX_LIFE_MS = 365LL * 24 * 60 * 60 * 1000;
                 if (parsed <= 0 || parsed > MAX_LIFE_MS) {
                     res.status = 400;
-                    res.set_content("Invalid life parameter: out of allowed range\n", "text/plain");
+                    res.set_content("{\"error\":\"life parameter out of allowed range\"}", "application/json");
                     return;
                 }
                 life_ms = std::chrono::milliseconds(parsed);
             } catch (...) {
                 res.status = 400;
-                res.set_content("Invalid life parameter\n", "text/plain");
+                res.set_content("{\"error\":\"invalid life parameter\"}", "application/json");
                 return;
             }
         }
 
         store.set(key, value, life_ms);
         res.status = 200;
-        res.set_content("OK\n", "text/plain");
+        res.set_content("{\"message\":\"ok\"}", "application/json");
     });
 
     server.Get(R"(/kv/(.+))", [&store](const httplib::Request& req, httplib::Response& res) {
@@ -96,7 +107,7 @@ int main(int argc, char const* argv[]) {
             res.set_content(*value, "text/plain");
         } else {
             res.status = 404;
-            res.set_content("Key not found\n", "text/plain");
+            res.set_content("{\"error\":\"key not found\"}", "application/json");
         }
     });
 
@@ -104,45 +115,56 @@ int main(int argc, char const* argv[]) {
         std::string key = req.matches[1];
         if (store.del(key)) {
             res.status = 200;
-            res.set_content("Deleted\n", "text/plain");
+            res.set_content("{\"message\":\"deleted record\"}", "application/json");
         } else {
             res.status = 404;
-            res.set_content("Key not found\n", "text/plain");
+            res.set_content("{\"error\":\"key not found\"}", "application/json");
         }
     });
 
-    server.Post("/admin/dump", [&store](const httplib::Request& req, httplib::Response& res) {
+    server.Post("/admin/dump", [&store, &admin_token](const httplib::Request& req, httplib::Response& res) {
+        if (!is_authorized(req, admin_token)) {
+            res.status = 401;
+            res.set_content("{\"error\":\"Unauthorized\"}", "application/json");
+            return;
+        }
+
         std::string filename = req.has_param("path") ? req.get_param_value("path") : "snapshot.bin";
         if (!is_safe_filename(filename)) {
             res.status = 400;
-            res.set_content("Invalid filename: directory traversal detected\n", "text/plain");
+            res.set_content("{\"error\":\"invalid filename provided\"}", "application/json");
             return;
         }
 
         if (store.dump(filename)) {
             res.status = 200;
-            res.set_content("Snapshot saved\n", "text/plain");
+            res.set_content("{\"message\":\"saved file\"}", "application/json");
         } else {
             res.status = 500;
-            res.set_content("Failed to save snapshot\n", "text/plain");
+            res.set_content("{\"error\":\"failed to save file\"}", "application/json");
         }
     });
 
-    server.Post("/admin/load", [&store](const httplib::Request& req, httplib::Response& res) {
-        std::string filename = req.has_param("path") ? req.get_param_value("path") : "snapshot.bin";
+    server.Post("/admin/load", [&store, &admin_token](const httplib::Request& req, httplib::Response& res) {
+        if (!is_authorized(req, admin_token)) {
+            res.status = 401;
+            res.set_content("{\"error\":\"Unauthorized\"}", "application/json");
+            return;
+        }
 
+        std::string filename = req.has_param("path") ? req.get_param_value("path") : "snapshot.bin";
         if (!is_safe_filename(filename)) {
             res.status = 400;
-            res.set_content("Invalid filename: directory traversal detected\n", "text/plain");
+            res.set_content("{\"error\":\"invalid filename provided\"}", "application/json");
             return;
         }
 
         if (store.load(filename)) {
             res.status = 200;
-            res.set_content("Snapshot loaded\n", "text/plain");
+            res.set_content("{\"message\":\"loaded file\"}", "application/json");
         } else {
             res.status = 500;
-            res.set_content("Failed to load snapshot\n", "text/plain");
+            res.set_content("{\"error\":\"failed to load file\"}", "application/json");
         }
     });
 

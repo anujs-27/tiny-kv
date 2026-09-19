@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.compiler }} - ASan:${{ matrix.asan }} - TSan:${{ matrix.tsan }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+        include:
+          # Plain build
+          - compiler: g++
+            asan: OFF
+            tsan: OFF
+          # AddressSanitizer build
+          - compiler: clang++
+            asan: ON
+            tsan: OFF
+          # ThreadSanitizer build
+          - compiler: clang++
+            asan: OFF
+            tsan: ON
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential clang
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DENABLE_ASAN=${{ matrix.asan }} \
+            -DENABLE_TSAN=${{ matrix.tsan }}
+
+      - name: Build Project
+        run: cmake --build build
+
+      - name: Run Tests
+        run: ctest --test-dir build --output-on-failure
