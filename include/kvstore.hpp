@@ -7,7 +7,6 @@
 #include <mutex>
 #include <optional>
 #include <set>
-#include <shared_mutex>
 #include <stop_token>
 #include <string>
 #include <syncstream>
@@ -43,7 +42,7 @@ class KVStore {
     std::unordered_map<std::string, Entry> store_;
     std::list<std::string> recently_used_;
     std::set<std::pair<std::chrono::steady_clock::time_point, std::string>> earliest_expiry_;
-    mutable std::shared_mutex rw_mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable_any cv_;
     std::jthread sweeper_thread_;
 

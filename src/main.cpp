@@ -38,23 +38,32 @@ int main(int argc, char const* argv[]) {
     size_t capacity = 1000;
     const char* env_token = std::getenv("TINYKV_ADMIN");
     std::string admin_token = env_token ? env_token : "";
+    bool verbose = false;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string_view arg = argv[i];
+        if (arg == "--verbose" || arg == "-v") {
+            verbose = true;
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: " << argv[0] << " [capacity] [--verbose|-v]\n";
+            return 0;
+        } else {
+            try {
+                unsigned long val = std::stoul(std::string(arg));
+                if (val == 0) {
+                    std::cerr << "Error: Capacity must be greater than 0.\n";
+                    return 1;
+                }
+                capacity = static_cast<size_t>(val);
+            } catch (...) {
+                std::cerr << "Usage: " << argv[0] << " [capacity] [--verbose|-v]\n";
+                return 1;
+            }
+        }
+    }
 
     if (admin_token.empty()) {
         std::cerr << "[WARN] TINYKV_ADMIN not configured. Admin endpoints (/admin/*) are disabled.\n";
-    }
-
-    if (argc > 1) {
-        try {
-            unsigned long val = std::stoul(argv[1]);
-            if (val == 0) {
-                std::cerr << "Error: Capacity must be greater than 0.\n";
-                return 1;
-            }
-            capacity = static_cast<size_t>(val);
-        } catch (...) {
-            std::cerr << "Usage: " << argv[0] << " [capacity]\n";
-            return 1;
-        }
     }
 
     KVStore store(capacity);
@@ -168,10 +177,11 @@ int main(int argc, char const* argv[]) {
         }
     });
 
-    server.set_logger([](const httplib::Request& req, const httplib::Response& res) {
-        std::osyncstream(std::cout) << "[INFO] " << req.method << " " << req.path << " -> " << res.status << "\n";
-    });
-
+    if (verbose) {
+        server.set_logger([](const httplib::Request& req, const httplib::Response& res) {
+            std::osyncstream(std::cout) << "[INFO] " << req.method << " " << req.path << " -> " << res.status << "\n";
+        });
+    }
     std::cout << "[INFO] STARTING SERVER ON PORT 8080 (CAPACITY: " << capacity << ")...\n";
     server.listen("0.0.0.0", 8080);
     return 0;

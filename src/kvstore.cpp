@@ -1,5 +1,7 @@
 #include "kvstore.hpp"
 
+#include <fstream>
+#include <mutex>
 #include <utility>
 
 static constexpr size_t MAX_KEY_LEN = 64 * 1024;
@@ -8,20 +10,19 @@ static constexpr size_t MAX_VAL_LEN = 16 * 1024 * 1024;
 void KVStore::set(std::string key, std::string value,
                   std::optional<std::chrono::milliseconds> life) {
     {
-        std::unique_lock<std::shared_mutex> guard(rw_mutex_);
+        std::lock_guard<std::mutex> guard(mutex_);
         set_unlocked(std::move(key), std::move(value), life);
     }
     cv_.notify_one();
 }
 
 std::optional<std::string> KVStore::get(const std::string& key) {
-    std::unique_lock<std::shared_mutex> guard(rw_mutex_);
+    std::lock_guard<std::mutex> guard(mutex_);
     auto iter = store_.find(key);
     if (iter == store_.end()) return std::nullopt;
 
     if (iter->second.expires_at.has_value()) {
-        if (std::chrono::steady_clock::now() >=
-            iter->second.expires_at.value()) {
+        if (std::chrono::steady_clock::now() >= iter->second.expires_at.value()) {
             earliest_expiry_.erase({iter->second.expires_at.value(), key});
             recently_used_.erase(iter->second.cache_map);
             store_.erase(iter);
@@ -37,7 +38,7 @@ std::optional<std::string> KVStore::get(const std::string& key) {
 }
 
 bool KVStore::del(const std::string& key) {
-    std::unique_lock<std::shared_mutex> guard(rw_mutex_);
+    std::lock_guard<std::mutex> guard(mutex_);
     auto iter = store_.find(key);
     if (iter == store_.end()) {
         return false;
@@ -51,7 +52,7 @@ bool KVStore::del(const std::string& key) {
 }
 
 size_t KVStore::cleanup_expired() {
-    std::unique_lock<std::shared_mutex> guard(rw_mutex_);
+    std::lock_guard<std::mutex> guard(mutex_);
     size_t deleted = 0;
     auto now = std::chrono::steady_clock::now();
     while (!earliest_expiry_.empty() && earliest_expiry_.begin()->first <= now) {
@@ -68,7 +69,7 @@ size_t KVStore::cleanup_expired() {
 }
 
 bool KVStore::dump(const std::string& filepath) const {
-    std::shared_lock<std::shared_mutex> guard(rw_mutex_);
+    std::lock_guard<std::mutex> guard(mutex_);
     std::ofstream file(filepath, std::ios::binary);
     if (!file.is_open()) {
         return false;
@@ -91,7 +92,7 @@ bool KVStore::dump(const std::string& filepath) const {
 }
 
 bool KVStore::load(const std::string& filepath) {
-    std::unique_lock<std::shared_mutex> guard(rw_mutex_);
+    std::lock_guard<std::mutex> guard(mutex_);
     std::ifstream file(filepath, std::ios::binary);
     if (!file.is_open()) return false;
     std::vector<std::pair<std::string, std::string>> staged_entries;
@@ -184,7 +185,7 @@ KVStore::~KVStore() {
 
 void KVStore::sweeper_loop(std::stop_token stop_token) {
     while (!stop_token.stop_requested()) {
-        std::unique_lock<std::shared_mutex> lock(rw_mutex_);
+        std::unique_lock<std::mutex> lock(mutex_);
         auto now = std::chrono::steady_clock::now();
         while (!earliest_expiry_.empty() && earliest_expiry_.begin()->first <= now) {
             auto [expiry, key] = *earliest_expiry_.begin();
