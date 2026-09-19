@@ -7,14 +7,23 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_compile_definitions(_DISABLE_STRING_ANNOTATION)
 
-if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    add_compile_options("$<$<CONFIG:Debug>:-fsanitize=address,undefined>")
-    add_link_options("$<$<CONFIG:Debug>:-fsanitize=address,undefined>")
+option(ENABLE_ASAN "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+
+if (ENABLE_ASAN AND ENABLE_TSAN)
+    message(FATAL_ERROR "ASan and TSan cannot be enabled simultaneously")
+endif()
+
+if (ENABLE_ASAN)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+elseif (ENABLE_TSAN)
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
 endif()
 
 find_package(Threads REQUIRED)
 
-# Core library
 add_library(tinykv_core STATIC
     src/kvstore.cpp
 )
@@ -29,18 +38,22 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     )
 endif()
 
-# Server executable
 add_executable(tinykv src/main.cpp)
 target_link_libraries(tinykv PRIVATE 
     tinykv_core
     Threads::Threads
 )
 
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(tinykv PRIVATE 
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow
+    )
+endif()
+
 if (WIN32)
     target_link_libraries(tinykv PRIVATE ws2_32 wsock32)
 endif()
 
-# External dependencies
 include(FetchContent)
 FetchContent_Declare(
     googletest
@@ -49,7 +62,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
-# Test executable
 enable_testing()
 
 add_executable(tinykv_test test/test.cpp)
@@ -58,6 +70,12 @@ target_link_libraries(tinykv_test PRIVATE
     gtest_main  
     Threads::Threads
 )
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(tinykv_test PRIVATE 
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow
+    )
+endif()
 
 include(GoogleTest)
 gtest_discover_tests(tinykv_test)

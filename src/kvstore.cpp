@@ -29,8 +29,10 @@ std::optional<std::string> KVStore::get(const std::string& key) {
         }
     }
 
-    recently_used_.splice(recently_used_.begin(), recently_used_,
-                          iter->second.cache_map);
+    if (iter->second.cache_map != recently_used_.begin()) {
+        recently_used_.splice(recently_used_.begin(), recently_used_,
+                              iter->second.cache_map);
+    }
     return iter->second.value;
 }
 
@@ -54,7 +56,7 @@ size_t KVStore::cleanup_expired() {
     auto now = std::chrono::steady_clock::now();
     while (!earliest_expiry_.empty() && earliest_expiry_.begin()->first <= now) {
         auto [expiry, key] = *earliest_expiry_.begin();
-        earliest_expiry_.erase(earliest_expiry_.begin());  // O(1) amortized
+        earliest_expiry_.erase(earliest_expiry_.begin());
         auto iter = store_.find(key);
         if (iter != store_.end()) {
             recently_used_.erase(iter->second.cache_map);
@@ -122,6 +124,7 @@ bool KVStore::load(const std::string& filepath) {
     for (auto& [k, v] : staged_entries) {
         set_unlocked(std::move(k), std::move(v), std::nullopt);
     }
+    cv_.notify_one();
     return true;
 }
 
@@ -142,8 +145,10 @@ void KVStore::set_unlocked(std::string key, std::string value,
 
         iter->second.value = std::move(value);
         iter->second.expires_at = expires_at;
-        recently_used_.splice(recently_used_.begin(), recently_used_,
-                              iter->second.cache_map);
+        if (iter->second.cache_map != recently_used_.begin()) {
+            recently_used_.splice(recently_used_.begin(), recently_used_,
+                                  iter->second.cache_map);
+        }
 
         if (expires_at.has_value()) {
             earliest_expiry_.insert({expires_at.value(), key});
@@ -154,9 +159,9 @@ void KVStore::set_unlocked(std::string key, std::string value,
     if (store_.size() >= cap_) {
         if (!recently_used_.empty()) {
             const std::string lru_key = recently_used_.back();
-            auto iter = store_.find(lru_key);
-            if (iter != store_.end() && iter->second.expires_at.has_value()) {
-                earliest_expiry_.erase({iter->second.expires_at.value(), lru_key});
+            auto key_iter = store_.find(lru_key);
+            if (key_iter != store_.end() && key_iter->second.expires_at.has_value()) {
+                earliest_expiry_.erase({key_iter->second.expires_at.value(), lru_key});
             }
             store_.erase(lru_key);
             recently_used_.pop_back();

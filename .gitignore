@@ -1,2 +1,4 @@
 build/
+build-tsan/
+build-asan/
 *.bin
